@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>DSH · 轨迹分析器</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">◇</span><span><strong>DSH 轨迹分析器</strong><small>Session event explorer</small></span></div>
+      <div class="top-actions">
+        <label class="session-picker"><span>会话</span><select id="sessionSelect" aria-label="选择会话"></select></label>
+        <button id="refreshButton" class="icon-button" type="button" title="刷新会话">↻</button>
+        <span id="liveStatus" class="live-status">正在连接</span>
+      </div>
+    </header>
+    <div class="workspace">
+      <aside class="sidebar">
+        <div class="side-heading">会话概览</div>
+        <div id="sessionSummary" class="session-summary"></div>
+        <nav class="nav" aria-label="分析视图">
+          <button type="button" data-tab="overview" class="active"><span class="nav-icon">▦</span> 总览</button>
+          <button type="button" data-tab="events"><span class="nav-icon">≡</span> Event 检查</button>
+          <button type="button" data-tab="steps"><span class="nav-icon">↔</span> LLM 往返</button>
+          <button type="button" data-tab="graph"><span class="nav-icon">◇</span> 轨迹图</button>
+          <button type="button" data-tab="sequence"><span class="nav-icon">⇢</span> 顺序图</button>
+        </nav>
+        <div class="sidebar-foot"><span class="privacy-dot"></span> 仅监听本机 · 只读会话日志</div>
+      </aside>
+      <main id="content" class="content" tabindex="-1"></main>
+    </div>
+  </div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
