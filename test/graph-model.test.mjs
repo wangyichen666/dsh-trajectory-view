@@ -51,3 +51,20 @@ test('selects a Turn and filters nodes without inventing edges', () => {
   assert.equal(laterMatch.rows[0].y, 82)
   assert.ok(laterMatch.height < projectGraph(fixture).height)
 })
+
+test('reveals prompt and stream only after a request detail is loaded', () => {
+  const summary = {
+    ...fixture.steps[0],
+    requests: [{ seq: 5, type: 'assistant/message', model: 'test-model', streamCount: 1,
+      response: { content: [{ text: 'answer' }] } }],
+  }
+  const data = { steps: [summary], requestDetails: new Map() }
+  const before = projectGraph(data)
+  assert.equal(before.nodes.find(node => node.kind === 'context').subtitle, '点击查看逻辑输入')
+  assert.equal(before.nodes.find(node => node.kind === 'model').subtitle, 'Event #5 · 1 条流记录')
+
+  data.requestDetails.set(5, fixture.steps[0].requests[1])
+  const after = projectGraph(data)
+  assert.equal(after.nodes.find(node => node.kind === 'context').subtitle, '1 条逻辑输入消息')
+  assert.equal(after.nodes.find(node => node.kind === 'model').detail.stream.length, 1)
+})

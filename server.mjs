@@ -78,9 +78,14 @@ async function loadSession(path) {
   const revision = `${info.size}-${info.mtimeMs}`
   const cached = cache.get(path)
   if (cached?.revision === revision) return cached.value
-  const value = await decodeLog(path)
+  const value = { ...await decodeLog(path), revision, requestDetails: new Map() }
   cache.set(path, { revision, value })
   return value
+}
+
+async function sessionRevision(path) {
+  const info = await stat(path)
+  return `${info.size}-${info.mtimeMs}`
 }
 
 function messageHistory(events, settlementIndex) {
@@ -123,7 +128,9 @@ function requestAt(events, index) {
 function buildSteps(events) {
   const steps = []
   let active = null
-  for (const [index, event] of events.entries()) {
+  let latestHeader = null
+  for (const event of events) {
+    if (event.type === 'request/header') latestHeader = event.data?.header ?? null
     if (event.type === 'step/start') {
       active = {
         key: `${event.data.turn}-${event.data.step}`,
@@ -143,7 +150,15 @@ function buildSteps(events) {
     if (active === null) continue
     active.eventSeqs.push(event.seq)
     if (event.type === 'assistant/message' || event.type === 'assistant/attempt') {
-      active.requests.push(requestAt(events, index))
+      active.requests.push({
+        seq: event.seq,
+        type: event.type,
+        time: event.time,
+        provider: latestHeader?.config?.provider ?? null,
+        model: latestHeader?.config?.model ?? null,
+        streamCount: event.data?.stream?.length ?? 0,
+        response: event.type === 'assistant/message' ? event.data?.message ?? null : null,
+      })
     }
     if (event.type === 'tool/call') {
       active.tools.push({
@@ -240,18 +255,39 @@ const server = createServer(async (request, response) => {
       json(response, 200, { sessions: await listSessions(files) })
       return
     }
-    if (url.pathname.startsWith('/api/session/')) {
-      const id = decodeURIComponent(url.pathname.slice('/api/session/'.length))
+    const sessionMatch = /^\/api\/session\/([^/]+)(?:\/(revision|request\/([0-9]+)))?$/u.exec(url.pathname)
+    if (sessionMatch !== null) {
+      const id = decodeURIComponent(sessionMatch[1])
       const path = files.get(id)
       if (path === undefined) {
         json(response, 404, { error: '会话不存在' })
         return
       }
-      const { header, events } = await loadSession(path)
+      if (sessionMatch[2] === 'revision') {
+        json(response, 200, { revision: await sessionRevision(path) })
+        return
+      }
+      const { header, events, revision, requestDetails } = await loadSession(path)
+      if (sessionMatch[3] !== undefined) {
+        const seq = Number(sessionMatch[3])
+        const event = events[seq]
+        if (event?.seq !== seq || (event.type !== 'assistant/message' && event.type !== 'assistant/attempt')) {
+          json(response, 404, { error: '模型请求不存在' })
+          return
+        }
+        let detail = requestDetails.get(seq)
+        if (detail === undefined) {
+          detail = requestAt(events, seq)
+          requestDetails.set(seq, detail)
+        }
+        json(response, 200, { request: detail, revision })
+        return
+      }
       json(response, 200, {
         header,
         events,
         steps: buildSteps(events),
+        revision,
         title: events.filter(event => event.type === 'session/title').at(-1)?.data?.title ?? id,
         loadedAt: Date.now(),
       })

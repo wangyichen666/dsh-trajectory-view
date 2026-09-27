@@ -53,7 +53,7 @@ export function projectGraph(data, scope = 'all') {
   let top = 82
 
   for (const step of steps) {
-    const requests = step.requests
+    const requests = step.requests.map(request => data.requestDetails?.get(request.seq) ?? request)
     const branches = [
       ...step.tools.map(tool => ({ kind: 'tool', value: tool, seq: tool.seq })),
       ...step.children.map(child => ({ kind: 'child', value: child, seq: child.seq })),
@@ -65,11 +65,12 @@ export function projectGraph(data, scope = 'all') {
     const contextId = `context:${step.key}`
     const firstRequest = requests[0]
     const finalRequest = requests.findLast(request => request.type === 'assistant/message')
-    const contextMessages = firstRequest?.messages ?? []
+    const contextMessages = firstRequest?.messages
     nodes.push(node(contextId, 'context', step, COLUMNS.context, middleY,
-      `第 ${step.turn} 轮 · 第 ${step.step} 步`, `${contextMessages.length} 条逻辑输入消息`,
+      `第 ${step.turn} 轮 · 第 ${step.step} 步`, contextMessages === undefined ? '点击查看逻辑输入' : `${contextMessages.length} 条逻辑输入消息`,
       { messages: contextMessages, header: firstRequest?.header ?? null,
-        requestContext: firstRequest?.requestContext ?? null, startSeq: step.startSeq }, step.startSeq))
+        requestContext: firstRequest?.requestContext ?? null, requestSeq: firstRequest?.seq ?? null,
+        startSeq: step.startSeq }, step.startSeq))
 
     let previousId = contextId
     if (requests.length === 0) {
@@ -84,7 +85,7 @@ export function projectGraph(data, scope = 'all') {
         const id = `model:${step.key}:${request.seq}`
         const subtitle = request.type === 'assistant/attempt'
           ? `Event #${request.seq} · 未完成尝试`
-          : `Event #${request.seq} · ${request.stream?.length ?? 0} 条流记录`
+          : `Event #${request.seq} · ${request.stream?.length ?? request.streamCount ?? 0} 条流记录`
         nodes.push(node(id, kind, step, COLUMNS.model,
           stackY(top, rowHeight, attemptCount, index),
           request.type === 'assistant/attempt' ? `第 ${index + 1} 次尝试` : 'LLM 响应',
@@ -99,7 +100,8 @@ export function projectGraph(data, scope = 'all') {
       outputId = `response:${step.key}:${finalRequest.seq}`
       nodes.push(node(outputId, 'response', step, COLUMNS.response, middleY,
         'Harness 解析结果', concise(messageText(finalRequest.response) || '已组装助手消息'),
-        { response: finalRequest.response, stream: finalRequest.stream, usage: finalRequest.usage },
+        { response: finalRequest.response, stream: finalRequest.stream,
+          usage: finalRequest.usage, requestSeq: finalRequest.seq },
         finalRequest.seq))
       edges.push(edge(`model:${step.key}:${finalRequest.seq}`, outputId, 'parsed'))
     }

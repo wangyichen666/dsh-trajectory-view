@@ -12,6 +12,9 @@ const state = {
   sessionId: new URL(location.href).searchParams.get('session'),
   data: null,
   signature: '',
+  requestDetails: new Map(),
+  requestErrors: new Map(),
+  pendingRequests: new Map(),
   tab: 'overview',
   eventSeq: null,
   stepKey: null,
@@ -81,6 +84,8 @@ function setTab(tab) {
   state.tab = tab
   for (const button of tabs) button.classList.toggle('active', button.dataset.tab === tab)
   renderContent()
+  if (tab === 'steps') ensureSelectedRequestDetail()
+  if (tab === 'graph') graphUi.loadSelectedRequest()
   content.scrollTop = 0
   window.scrollTo({ top: 0, behavior: 'instant' })
 }
@@ -191,21 +196,24 @@ function streamCards(stream) {
 
 function renderStepDetail(step) {
   const index = Math.min(state.attemptIndex ?? step.requests.length - 1, step.requests.length - 1)
-  const request = step.requests[index]
-  const provider = request?.header?.config?.provider ?? '未知'
-  const model = request?.header?.config?.model ?? '未知'
+  const summary = step.requests[index]
+  const request = summary === undefined ? undefined : (state.requestDetails.get(summary.seq) ?? summary)
+  const ready = Array.isArray(request?.messages)
+  const requestError = summary === undefined ? null : state.requestErrors.get(summary.seq)
+  const provider = request?.provider ?? request?.header?.config?.provider ?? '未知'
+  const model = request?.model ?? request?.header?.config?.model ?? '未知'
   const contextNotice = '请求消息按该次响应前的 Session 前缀重建，包含当时仍有效的 system、user、assistant 与 tool 消息。assistant/attempt 只记录失败或重试的流，不进入后续对话上下文。'
   return `<div class="detail-stack"><section class="panel"><div class="panel-head"><h2>${escapeHtml(stepTitle(step))}</h2><span>#${step.startSeq}–${step.endSeq ?? '进行中'}</span></div><div class="panel-body"><div class="quick-grid"><div class="quick"><span>模型</span><strong>${escapeHtml(model)}</strong></div><div class="quick"><span>模型尝试</span><strong>${step.requests.length}</strong></div><div class="quick"><span>步骤耗时</span><strong>${escapeHtml(fmtDuration(step.startTime, step.endTime))}</strong></div></div><div class="section-title"><h2>步骤 Event</h2><small>完整时间线</small></div><div class="toolbar">${step.eventSeqs.map(seq => `<button class="ghost-button" type="button" data-event="${seq}">#${seq} ${escapeHtml(state.data.events[seq]?.type ?? '')}</button>`).join('')}</div></div></section>
     <section class="panel"><div class="panel-head"><h2>LLM 请求与响应</h2><span>${escapeHtml(provider)}</span></div><div class="panel-body">${request === undefined ? '<div class="empty">尚无持久化模型尝试。</div>' : `
       <div class="attempt-tabs">${step.requests.map((attempt, attemptIndex) => `<button type="button" data-attempt="${attemptIndex}" class="${attemptIndex === index ? 'active' : ''}">${attempt.type === 'assistant/message' ? '已组装响应' : '未完成尝试'} · #${attempt.seq}</button>`).join('')}</div>
       <div class="notice">${escapeHtml(contextNotice)}</div>
-      ${request.error ? `<div class="notice warn" style="margin-top:12px">上下文无法完整重建：${escapeHtml(request.error)}</div>` : `
+      ${request.error ? `<div class="notice warn" style="margin-top:12px">上下文无法完整重建：${escapeHtml(request.error)}</div>` : !ready ? `<div class="notice ${requestError ? 'warn' : ''}" style="margin-top:12px">${requestError ? `读取失败：${escapeHtml(requestError)}` : '正在按需读取完整逻辑输入与标准化响应流…'}</div>` : `
       <div class="section-title"><h2>发送给模型适配器的输入</h2><small>${request.messages.length} 条有序消息</small></div>
       <details><summary>请求配置与工具 Schema <span class="summary-muted">${escapeHtml(provider)} / ${escapeHtml(model)}</span></summary><div class="detail-inner">${codeBox(request.header)}</div></details>
       <details><summary>请求上下文 <span class="summary-muted">provider / model / context window</span></summary><div class="detail-inner">${codeBox(request.requestContext)}</div></details>
       <div class="section-title"><h2>上下文消息</h2><small>按模型接收顺序</small></div>${messageCards(request.messages)}`}
-      <div class="section-title"><h2>模型返回的标准化流</h2><small>${request.stream?.length ?? 0} 条持久化记录</small></div>${streamCards(request.stream)}
-      <details style="margin-top:9px"><summary>查看完整标准化流 JSON</summary><div class="detail-inner">${codeBox(request.stream)}</div></details>
+      <div class="section-title"><h2>模型返回的标准化流</h2><small>${request.stream?.length ?? request.streamCount ?? 0} 条持久化记录</small></div>${ready ? streamCards(request.stream) : '<div class="notice">选中请求后加载流详情。</div>'}
+      ${ready ? `<details style="margin-top:9px"><summary>查看完整标准化流 JSON</summary><div class="detail-inner">${codeBox(request.stream)}</div></details>` : ''}
       <div class="section-title"><h2>Harness 组装结果</h2><small>BlockAssembler 结果</small></div>${request.response === null ? '<div class="notice">此尝试只有日志流，没有提交助手消息。</div>' : codeBox(request.response)}
       ${request.usage ? `<details style="margin-top:9px"><summary>Token 用量</summary><div class="detail-inner">${codeBox(request.usage)}</div></details>` : ''}
     `}</div></section>
@@ -245,7 +253,7 @@ function sequenceSvg(steps) {
         row = { from: 0, to: 1, label: `${stepTitle(step)} · step/start #${seq}`, color: '#82aaf2' }
       } else if (event.type === 'assistant/message' || event.type === 'assistant/attempt') {
         const request = step.requests.find(item => item.seq === seq)
-        rows.push({ y, from: 1, to: 2, label: `request · ${request?.messages?.length ?? '?'} 条消息`, key: step.key, color: '#b69aec' })
+        rows.push({ y, from: 1, to: 2, label: `request #${seq} · ${request?.model ?? '模型'}`, key: step.key, color: '#b69aec' })
         y += 34
         row = { from: 2, to: 1, label: `${event.type} #${seq}`, color: '#b69aec' }
       } else if (event.type === 'tool/call') {
@@ -310,6 +318,39 @@ async function api(path) {
   return data
 }
 
+async function ensureRequestDetail(seq) {
+  if (state.data === null || state.requestDetails.has(seq)) return
+  if (state.pendingRequests.has(seq)) return state.pendingRequests.get(seq)
+  const id = state.sessionId
+  const revision = state.signature
+  const task = api(`/api/session/${encodeURIComponent(id)}/request/${seq}`).then(result => {
+    if (id !== state.sessionId || revision !== state.signature || result.revision !== revision) return
+    state.requestDetails.set(seq, result.request)
+    state.requestErrors.delete(seq)
+    if (state.tab === 'graph') graphUi.refresh()
+    else if (state.tab === 'steps') renderContent()
+  }).catch(error => {
+    if (id === state.sessionId && revision === state.signature) {
+      state.requestErrors.set(seq, error instanceof Error ? error.message : String(error))
+      if (state.tab === 'graph') graphUi.refresh()
+      else if (state.tab === 'steps') renderContent()
+    }
+    throw error
+  }).finally(() => {
+    if (state.pendingRequests.get(seq) === task) state.pendingRequests.delete(seq)
+  })
+  state.pendingRequests.set(seq, task)
+  return task
+}
+
+function ensureSelectedRequestDetail() {
+  if (state.data === null) return
+  const step = state.data.steps.find(row => row.key === state.stepKey) ?? state.data.steps[0]
+  const index = Math.min(state.attemptIndex ?? step?.requests.length - 1, step?.requests.length - 1)
+  const seq = step?.requests[index]?.seq
+  if (seq !== undefined) void ensureRequestDetail(seq).catch(() => {})
+}
+
 async function refreshSessions() {
   const result = await api('/api/sessions')
   state.sessions = result.sessions
@@ -317,6 +358,12 @@ async function refreshSessions() {
   sessionSelect.innerHTML = state.sessions.map(session => `<option value="${escapeHtml(session.id)}" ${session.id === selected ? 'selected' : ''}>${escapeHtml(short(session.title, 50))}</option>`).join('')
   if (!state.sessions.some(session => session.id === state.sessionId)) {
     state.sessionId = state.sessions[0]?.id ?? null
+    state.data = null
+    state.signature = ''
+    state.requestDetails = new Map()
+    state.requestErrors = new Map()
+    state.pendingRequests = new Map()
+    graphUi.reset()
     sessionSelect.value = state.sessionId ?? ''
   }
 }
@@ -328,10 +375,23 @@ async function refreshSession(force = false) {
     return
   }
   const id = state.sessionId
+  if (!force && state.signature) {
+    const current = await api(`/api/session/${encodeURIComponent(id)}/revision`)
+    if (id !== state.sessionId) return
+    if (current.revision === state.signature) {
+      liveStatus.textContent = `已同步 · ${fmtClock(Date.now())}`
+      return
+    }
+  }
   const result = await api(`/api/session/${encodeURIComponent(id)}`)
   if (id !== state.sessionId) return
-  const signature = `${result.events.length}-${result.events.at(-1)?.time}-${result.title}`
+  const signature = result.revision
   if (force || signature !== state.signature) {
+    state.requestDetails = new Map()
+    state.requestErrors = new Map()
+    state.pendingRequests = new Map()
+    result.requestDetails = state.requestDetails
+    result.requestErrors = state.requestErrors
     state.data = result
     state.signature = signature
     state.error = null
@@ -339,6 +399,8 @@ async function refreshSession(force = false) {
     if (!result.events.some(event => event.seq === state.eventSeq)) state.eventSeq = result.events[0]?.seq ?? null
     renderSummary()
     renderContent()
+    if (state.tab === 'steps') ensureSelectedRequestDetail()
+    if (state.tab === 'graph') graphUi.loadSelectedRequest()
   }
   liveStatus.textContent = `已同步 · ${fmtClock(Date.now())}`
 }
@@ -358,6 +420,9 @@ function selectSession(id) {
   state.sessionId = id
   state.data = null
   state.signature = ''
+  state.requestDetails = new Map()
+  state.requestErrors = new Map()
+  state.pendingRequests = new Map()
   state.stepKey = null
   state.eventSeq = null
   graphUi.reset()
@@ -376,7 +441,7 @@ function showError(error) {
   renderContent()
 }
 
-const graphUi = new GraphUi({ content, escapeHtml, short, codeBox, rerender: renderContent })
+const graphUi = new GraphUi({ content, escapeHtml, short, codeBox, rerender: renderContent, loadRequest: ensureRequestDetail })
 
 for (const button of tabs) button.addEventListener('click', () => setTab(button.dataset.tab))
 sessionSelect.addEventListener('change', () => selectSession(sessionSelect.value))
@@ -390,7 +455,7 @@ content.addEventListener('click', async event => {
   const row = event.target.closest('[data-event]')
   if (row) { selectEvent(Number(row.dataset.event)); return }
   const attempt = event.target.closest('[data-attempt]')
-  if (attempt) { state.attemptIndex = Number(attempt.dataset.attempt); renderContent(); return }
+  if (attempt) { state.attemptIndex = Number(attempt.dataset.attempt); renderContent(); ensureSelectedRequestDetail(); return }
   const child = event.target.closest('[data-session]')
   if (child) { selectSession(child.dataset.session); return }
   const copy = event.target.closest('[data-copy]')

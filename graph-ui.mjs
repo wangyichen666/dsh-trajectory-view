@@ -19,12 +19,13 @@ function edgePath(edge, byId) {
 
 /** Session graph controls and SVG presentation. The graph model contains only recorded facts. */
 export class GraphUi {
-  constructor({ content, escapeHtml, short, codeBox, rerender }) {
+  constructor({ content, escapeHtml, short, codeBox, rerender, loadRequest }) {
     this.content = content
     this.escapeHtml = escapeHtml
     this.short = short
     this.codeBox = codeBox
     this.rerender = rerender
+    this.loadRequest = loadRequest
     this.scope = 'all'
     this.scopeChosen = false
     this.states = new Map()
@@ -125,11 +126,26 @@ export class GraphUi {
       case 'tool': sections = [['模型给工具的入参', detail.arguments], ['工具返回给模型的结果', detail.result], ['错误', detail.error]]; break
       default: sections = [['已记录信息', detail]]
     }
+    const requestSeq = item.kind === 'context' ? detail.requestSeq : (detail.requestSeq ?? item.seq)
+    const loading = ['context', 'model', 'retry', 'response'].includes(item.kind)
+      && requestSeq !== null && requestSeq !== undefined && !this.data.requestDetails?.has(requestSeq)
+    const requestError = this.data.requestErrors?.get(requestSeq)
     return `<aside class="graph-inspector" aria-label="节点详情">
       <div class="graph-inspector-head"><div><span class="tag ${item.kind === 'tool' ? 'tool' : item.kind === 'child' ? 'subagent' : 'model'}">${e(GRAPH_TYPES.find(([kind]) => kind === item.kind)?.[1] ?? item.kind)}</span><h2>${e(item.title)}</h2><p>${e(item.subtitle)}</p></div><button type="button" data-graph-close aria-label="关闭节点详情">×</button></div>
       <div class="graph-inspector-actions"><button type="button" class="ghost-button" data-step="${e(item.stepKey)}">查看完整步骤</button>${item.seq === null ? '' : `<button type="button" class="ghost-button" data-event="${item.seq}">Event #${item.seq}</button>`}</div>
+      ${loading ? `<div class="notice ${requestError ? 'warn' : ''}">${requestError ? `读取失败：${e(requestError)} <button type="button" class="ghost-button" data-graph-retry>重试</button>` : '正在按需读取这次模型请求的完整上下文与标准化流…'}</div>` : ''}
       ${sections.filter(([, value]) => value !== null && value !== undefined).map(([title, value], index) => `<details ${index === 0 ? 'open' : ''}><summary>${e(title)}</summary><div class="detail-inner">${this.codeBox(value)}</div></details>`).join('')}
     </aside>`
+  }
+
+  loadSelectedRequest() {
+    const selectedId = this.current().selectedId
+    if (selectedId === null) return
+    const item = this.graph().full.nodes.find(node => node.id === selectedId)
+    if (!item || !['context', 'model', 'retry', 'response'].includes(item.kind)) return
+    const seq = item.kind === 'context' ? item.detail.requestSeq : (item.detail.requestSeq ?? item.seq)
+    if (seq === null || seq === undefined || this.data.requestDetails?.has(seq)) return
+    void this.loadRequest(seq).then(() => this.refresh(), () => this.refresh())
   }
 
   refresh() {
@@ -148,6 +164,10 @@ export class GraphUi {
   handleClick(event) {
     const target = event.target instanceof Element ? event.target : null
     if (!target) return false
+    if (target.closest('[data-graph-retry]')) {
+      this.loadSelectedRequest()
+      return true
+    }
     const scope = target.closest('[data-graph-scope]')
     if (scope) {
       this.scope = scope.dataset.graphScope === 'all' ? 'all' : Number(scope.dataset.graphScope)
@@ -181,6 +201,7 @@ export class GraphUi {
     if (item) {
       this.current().selectedId = item.dataset.graphNode
       this.refresh()
+      this.loadSelectedRequest()
       return true
     }
     if (target.closest('[data-graph-close]')) {
