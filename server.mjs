@@ -200,11 +200,11 @@ async function listSessions(files) {
 const server = createServer(async (request, response) => {
   try {
     const url = new URL(request.url ?? '/', `http://127.0.0.1:${port}`)
-    if (url.pathname === '/app.js' || url.pathname === '/style.css') {
+    if (url.pathname === '/app.js' || url.pathname === '/graph-model.mjs' || url.pathname === '/graph-ui.mjs' || url.pathname === '/style.css') {
       const name = url.pathname.slice(1)
       const content = await readFile(join(here, name))
       response.writeHead(200, {
-        'content-type': name.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8',
+        'content-type': name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
         'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
       })
       response.end(content)

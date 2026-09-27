@@ -27,6 +27,12 @@ npm start
 
 在 DSH Web 中打开任一会话，选择 **分析 → 打开详情**。分析器也可直接通过启动输出的链接打开，并在页面顶部选择 Session。
 
+## 轨迹图交互
+
+轨迹图默认打开最新一轮，可切换至其他轮次或会话总览；每轮独立保留搜索、节点类型筛选、缩放和节点选择。滚轮围绕指针缩放，拖动空白画布平移，也可使用工具栏的适应、缩小和放大按钮。节点详情保留到完整步骤与原始 Event 的入口。
+
+图中将上下文、每次模型尝试、Harness 组装结果、每次工具调用和子 Agent 目录记录分成独立节点。多个工具在同一步中并列展示，存在 `tool/result` 时才绘制工具返回的实线；子 Agent 连线只表示父会话的目录记录。图谱交互参考了 [trajectory-graph](https://github.com/TangRj-Git/trajectory-graph) 的按轮次导航和语义节点设计。
+
 ## 数据范围
 
 页面支持当前的 Session v4 JSONL 和拼接 Zstandard 帧，读取时忽略尚未写完的末尾帧。Event 检查器保留每条日志的完整 JSON。LLM 页面以该次 `assistant/message` 或 `assistant/attempt` 之前的日志前缀重建有序消息；`request/header` 提供请求配置和工具 Schema。模型返回显示已保存的适配器标准化流与 Harness 组装后的消息。历史日志没有保存提供方原始 HTTP 请求体或原始 SSE 帧。

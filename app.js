@@ -1,3 +1,5 @@
+import { GraphUi } from './graph-ui.mjs'
+
 const token = new URL(location.href).searchParams.get('token')
 const content = document.querySelector('#content')
 const sessionSelect = document.querySelector('#sessionSelect')
@@ -223,36 +225,10 @@ function svgButton() {
   return '<button type="button" class="ghost-button" data-download-svg="traceSvg">下载 SVG ↓</button>'
 }
 
-function graphSvg(steps) {
-  const rowHeight = 134
-  const height = 110 + steps.length * rowHeight
-  const lines = [`<svg id="traceSvg" viewBox="0 0 1120 ${height}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="DSH 模型步骤轨迹图">
-    <defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#59769e"/></marker></defs>
-    <line x1="75" y1="82" x2="75" y2="${height - 55}" stroke="#47658f" stroke-width="2" stroke-dasharray="5 6"/>
-    <text x="35" y="42" fill="#a9c1e8" font-size="13" font-weight="700">Session</text><text x="195" y="42" fill="#a9c1e8" font-size="13" font-weight="700">Agent Loop</text><text x="606" y="42" fill="#c7adef" font-size="13" font-weight="700">LLM</text><text x="883" y="42" fill="#e4b98a" font-size="13" font-weight="700">Tool / Child</text>`]
-  for (const [index, step] of steps.entries()) {
-    const y = 81 + index * rowHeight
-    const response = step.requests.findLast(request => request.response !== null)
-    const title = `第 ${step.turn} 轮 · 步骤 ${step.step}`
-    const preview = short(textOf(response?.response) || '模型尝试', 34)
-    lines.push(`<circle cx="75" cy="${y + 38}" r="10" fill="#4879bb" stroke="#a4c6f8" stroke-width="2"/><text x="75" y="${y + 42}" fill="#fff" text-anchor="middle" font-size="10">${step.step}</text>
-      <line x1="85" y1="${y + 38}" x2="145" y2="${y + 38}" stroke="#6380a6" marker-end="url(#arrow)"/>
-      <g data-step="${escapeHtml(step.key)}"><rect x="150" y="${y}" width="350" height="78" rx="10" fill="#1c3153" stroke="#5579b0"/><text x="169" y="${y + 25}" fill="#edf5ff" font-size="14" font-weight="700">${escapeHtml(title)}</text><text x="169" y="${y + 46}" fill="#a4b8d6" font-size="11">${escapeHtml(preview)}</text><text x="169" y="${y + 65}" fill="#83a2d5" font-size="10">${step.eventSeqs.length} Events · ${escapeHtml(fmtDuration(step.startTime, step.endTime))}</text></g>
-      <line x1="500" y1="${y + 38}" x2="573" y2="${y + 38}" stroke="#8b73b9" marker-end="url(#arrow)"/>
-      <g data-step="${escapeHtml(step.key)}"><rect x="580" y="${y + 8}" width="218" height="61" rx="9" fill="#302b51" stroke="#785eae"/><text x="599" y="${y + 32}" fill="#eadcfe" font-size="12" font-weight="700">LLM · ${step.requests.length} 次尝试</text><text x="599" y="${y + 51}" fill="#baa9d4" font-size="10">${response ? `响应 Event #${response.seq}` : '等待持久化响应'}</text></g>`)
-    if (step.tools.length || step.children.length) {
-      lines.push(`<line x1="798" y1="${y + 38}" x2="838" y2="${y + 38}" stroke="#c59261" marker-end="url(#arrow)"/>
-        <g data-step="${escapeHtml(step.key)}"><rect x="846" y="${y + 8}" width="238" height="61" rx="9" fill="#3b302a" stroke="#a2754c"/><text x="865" y="${y + 32}" fill="#ffdcaf" font-size="12" font-weight="700">${step.tools.length} 工具 · ${step.children.length} 子 Agent</text><text x="865" y="${y + 51}" fill="#d2ac86" font-size="10">${escapeHtml(short(step.tools.map(tool => tool.name).join(' · ') || step.children.map(child => child.label ?? child.childId).join(' · '), 30))}</text></g>`)
-    }
-  }
-  lines.push('</svg>')
-  return lines.join('')
-}
-
 function renderGraph() {
-  return `${heading('TRAJECTORY MAP', '轨迹图', '每个节点对应一次模型步骤。点击节点进入完整 LLM 往返与 Event 细节。', svgButton())}
-    <p class="graph-note">纵向顺序是 Session 的步骤顺序；连线表示 Agent Loop → LLM → 工具或子会话的关系。</p>
-    <div class="graph-shell">${graphSvg(state.data.steps)}</div><div class="graph-legend"><span><i class="legend-dot" style="background:#4879bb"></i>Session 顺序</span><span><i class="legend-dot" style="background:#35639d"></i>Agent 步骤</span><span><i class="legend-dot" style="background:#785eae"></i>LLM</span><span><i class="legend-dot" style="background:#a2754c"></i>工具 / 子 Agent</span></div>`
+  return `${heading('TRAJECTORY MAP', '轨迹图', '按轮次查看上下文、模型尝试、解析响应、工具和子 Agent。点击节点检查原始记录。', svgButton())}
+    <p class="graph-note">每行对应一个步骤；从左到右展示已记录的输入、响应与执行分支。实线工具返回表示存在 tool/result，虚线子 Agent 关系只表示目录记录，不推断子会话已经完成。</p>
+    ${graphUi.render(state.data)}`
 }
 
 function sequenceSvg(steps) {
@@ -384,6 +360,7 @@ function selectSession(id) {
   state.signature = ''
   state.stepKey = null
   state.eventSeq = null
+  graphUi.reset()
   const url = new URL(location.href)
   url.searchParams.set('session', id)
   history.replaceState(null, '', url)
@@ -399,12 +376,15 @@ function showError(error) {
   renderContent()
 }
 
+const graphUi = new GraphUi({ content, escapeHtml, short, codeBox, rerender: renderContent })
+
 for (const button of tabs) button.addEventListener('click', () => setTab(button.dataset.tab))
 sessionSelect.addEventListener('change', () => selectSession(sessionSelect.value))
 document.querySelector('#refreshButton').addEventListener('click', () => {
   void refreshSessions().then(() => refreshSession(true)).catch(showError)
 })
 content.addEventListener('click', async event => {
+  if (graphUi.handleClick(event)) return
   const step = event.target.closest('[data-step]')
   if (step) { selectStep(step.dataset.step); return }
   const row = event.target.closest('[data-event]')
@@ -433,6 +413,7 @@ content.addEventListener('click', async event => {
   }
 })
 content.addEventListener('input', event => {
+  if (graphUi.handleInput(event)) return
   if (event.target.id !== 'eventSearch') return
   state.eventQuery = event.target.value
   const list = document.querySelector('#eventList')
@@ -440,6 +421,17 @@ content.addEventListener('input', event => {
   const count = document.querySelector('#eventCount')
   if (count) count.textContent = `${filteredEvents().length} / ${state.data.events.length}`
 })
+content.addEventListener('keydown', event => {
+  if ((event.key === 'Enter' || event.key === ' ') && event.target.closest('[data-graph-node]')) {
+    event.preventDefault()
+    graphUi.handleClick(event)
+  }
+})
+content.addEventListener('wheel', event => { graphUi.handleWheel(event) }, { passive: false })
+content.addEventListener('pointerdown', event => { graphUi.handlePointerDown(event) })
+content.addEventListener('pointermove', event => { graphUi.handlePointerMove(event) })
+content.addEventListener('pointerup', event => { graphUi.handlePointerUp(event) })
+content.addEventListener('pointercancel', event => { graphUi.handlePointerUp(event) })
 content.addEventListener('change', event => {
   if (event.target.id !== 'eventTypeFilter') return
   state.eventType = event.target.value
